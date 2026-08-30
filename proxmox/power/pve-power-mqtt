@@ -1,0 +1,59 @@
+#!/bin/bash
+# Publishes PVE host CPU power (RAPL), usage, and temp to MQTT for HA discovery.
+# Requires: bash, mosquitto-clients, Intel RAPL (/sys/class/powercap), an MQTT broker + Home Assistant; creds in /etc/pve-power-mqtt.env
+set -u
+. /etc/pve-power-mqtt.env
+
+INTERVAL=30
+STATE_TOPIC="pve/pvehost/power"
+PKG=/sys/class/powercap/intel-rapl:0
+CORE=/sys/class/powercap/intel-rapl:0:0
+DRAM=/sys/class/powercap/intel-rapl:0:2
+
+TEMP_INPUT=""
+for h in /sys/class/hwmon/hwmon*; do
+    [ "$(cat "$h/name" 2>/dev/null)" = "coretemp" ] && TEMP_INPUT="$h/temp1_input" && break
+done
+
+pub() { mosquitto_pub -h "$MQTT_HOST" -u "$MQTT_USER" -P "$MQTT_PASS" "$@"; }
+
+device='{"identifiers":["pve_pvehost"],"name":"PVE Host","manufacturer":"Generic","model":"Proxmox VE host"}'
+
+discover() {  # key  name  unit  extra-json-fields
+    pub -r -t "homeassistant/sensor/pve_pvehost/$1/config" -m \
+        "{\"name\":\"$2\",\"unique_id\":\"pve_pvehost_$1\",\"state_topic\":\"$STATE_TOPIC\",\"value_template\":\"{{ value_json.$1 }}\",\"unit_of_measurement\":\"$3\",\"expire_after\":90,$4\"device\":$device}"
+}
+
+until pub -t "pve/pvehost/status" -m online; do sleep 15; done
+
+discover pkg_w      "CPU package power" "W"   '"device_class":"power","state_class":"measurement",'
+discover core_w     "CPU cores power"   "W"   '"device_class":"power","state_class":"measurement",'
+discover dram_w     "DRAM power"        "W"   '"device_class":"power","state_class":"measurement",'
+discover temp_c     "CPU temperature"   "°C"  '"device_class":"temperature","state_class":"measurement",'
+discover energy_kwh "CPU energy"        "kWh" '"device_class":"energy","state_class":"total_increasing",'
+
+PMAX=$(cat "$PKG/max_energy_range_uj")
+CMAX=$(cat "$CORE/max_energy_range_uj")
+DMAX=$(cat "$DRAM/max_energy_range_uj")
+
+p1=$(cat "$PKG/energy_uj"); c1=$(cat "$CORE/energy_uj"); d1=$(cat "$DRAM/energy_uj")
+ns1=$(date +%s%N)
+acc_uj=0
+
+while sleep "$INTERVAL"; do
+    p2=$(cat "$PKG/energy_uj"); c2=$(cat "$CORE/energy_uj"); d2=$(cat "$DRAM/energy_uj")
+    ns2=$(date +%s%N)
+    dp=$((p2 - p1)); [ "$dp" -lt 0 ] && dp=$((dp + PMAX))
+    dc=$((c2 - c1)); [ "$dc" -lt 0 ] && dc=$((dc + CMAX))
+    dd=$((d2 - d1)); [ "$dd" -lt 0 ] && dd=$((dd + DMAX))
+    dns=$((ns2 - ns1))
+    temp=-1
+    [ -n "$TEMP_INPUT" ] && temp=$(( $(cat "$TEMP_INPUT") / 1000 ))
+    acc_uj=$((acc_uj + dp))
+    payload=$(awk -v dp="$dp" -v dc="$dc" -v dd="$dd" -v dns="$dns" -v temp="$temp" -v acc="$acc_uj" \
+        'BEGIN { s = dns / 1e9;
+                 printf "{\"pkg_w\":%.1f,\"core_w\":%.1f,\"dram_w\":%.1f,\"temp_c\":%d,\"energy_kwh\":%.4f}",
+                        dp / 1e6 / s, dc / 1e6 / s, dd / 1e6 / s, temp, acc / 3.6e12 }')
+    pub -t "$STATE_TOPIC" -m "$payload" || true
+    p1=$p2; c1=$c2; d1=$d2; ns1=$ns2
+done

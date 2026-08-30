@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Ansible update at 23:00 (backup window is 02:30-04:10)
+
+[Timer]
+OnCalendar=*-*-* 23:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

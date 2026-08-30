@@ -1,0 +1,2 @@
+# Off-box pull of the Unraid flash-config backup, after the weekly Sun 23:00 Appdata Backup
+30 0 * * 1 root /usr/local/sbin/unraid-flash-pull.sh

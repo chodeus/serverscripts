@@ -1,0 +1,2 @@
+# Daily off-box backup of PVE host config to Unraid (03:30)
+30 3 * * * root /usr/local/sbin/pve-host-backup.sh

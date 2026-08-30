@@ -1,0 +1,111 @@
+# mover-tuning.cfg by BZ — https://github.com/TRaSH-Guides/Guides
+# Copy to mover-tuning.cfg and fill in. Changes: see unraid/README.md
+
+readonly CONFIG_VERSION="1.3.1" # ONLY UPDATE THE VERSION NUMBER WHEN A CONFIGURATION FILE CHANGE HAS BEEN MADE
+readonly ENABLE_VERSION_CHECK=true # Set to false to disable all update checks and notifications (not recommended)
+
+# =============================================
+# <----- mover-tuning start/end settings ----->
+# =============================================
+
+# Auto-installer configuration (Optional)
+readonly ENABLE_AUTO_INSTALLER=true  # Set to false to disable qBit-Api and qBit-Mover auto installer
+
+# qBit-Mover Settings
+# >>> NOTE: Setting "DAYS_FROM" below 2 days may not work properly <<<
+readonly DAYS_FROM=3  # How old torrents must be (in days) before they're paused and moved (Must be at least 2 days)
+readonly DAYS_TO=10    # Maximum age (days) for torrent selection (must be >= DAYS_FROM)
+readonly CACHE_MOUNT="/mnt/cache/"  # Cache mount point in Unraid
+readonly QBIT_MOVER_PATH="/mnt/user/appdata/qbt-mover/"  # Path to mover.py
+
+# qBittorrent instances
+# Supports unlimited qBittorrent instances
+# Arrays NAMES, HOSTS, USERS and PASSWORDS must all have the same length
+# NAMES array is optional - if omitted, instances will be named "qBit-Instance-1", "qBit-Instance-2", etc.
+readonly NAMES=("qBittorrent")  # qBittorrent instance names
+readonly HOSTS=("localhost:8080")  # qBittorrent host:port
+readonly USERS=("admin")  # qBittorrent usernames
+readonly PASSWORDS=("CHANGEME")  # qBittorrent passwords
+readonly CA_BUNDLES=("")  # Path to CA bundle for SSL with self signed cert
+
+# Docker container management (OPTIONAL)
+# Stop containers before the mover runs and start them again afterwards.
+# Supports any number of Docker containers (not limited to qBit-Manage).
+# Set ENABLE_DOCKER_MANAGEMENT=false to disable this feature entirely.
+readonly ENABLE_DOCKER_MANAGEMENT=false
+readonly DOCKER_CONTAINERS=()  # Add as many containers as needed, e.g. ("qbit-manage" "qui" "cross-seed")
+readonly DOCKER_WAIT=5  # Wait time (seconds) after all containers have been stopped
+
+# Duplicate finder script (OPTIONAL)
+readonly ENABLE_DUPLICATE_FINDER=true # Set to false to disable duplicate finder
+readonly DUPLICATE_FINDER_NAME="Duplicate Finder" # Name for logging/notifications
+
+# =========================================
+# <----- fclones run script settings ----->
+# =========================================
+
+# Path to fclones executable
+#
+# OPTION 1: System-wide installation (Recommended)
+# If you installed fclones system-wide (e.g., via the mover-tuning-end script)
+# it will be available in your PATH.
+# In this case, simply use:
+# FCLONES_PATH="fclones"
+#
+# OPTION 2: Custom binary location
+# If you downloaded the fclones binary manually:
+#   1. Download from: https://github.com/pkolaczk/fclones/releases
+#   2. Extract the archive
+#   3. Make the binary executable: chmod +x fclones
+#   4. Place it in a directory of your choice
+#   5. Set the full path below, for example:
+# FCLONES_PATH="/mnt/user/apps/fclones/fclones"
+
+# To verify your installation, run: $FCLONES_PATH --version
+readonly FCLONES_PATH="fclones"
+
+# fclones arguments for the group command
+# Note: --cache, file paths, and --name patterns will be added automatically
+# DO NOT include quoted args with spaces!
+readonly FCLONES_ARGS="--one-fs --hidden --follow-links"
+
+# File patterns to match (space-separated)
+readonly FILE_PATTERNS="*.mkv *.mp4 *.avi"
+
+# Temp file settings
+# Path where fclones saves the output of group the group command which is then passed to link.
+# Defaults to "/tmp/fclones".
+TEMP_PATH="/tmp/fclones"
+readonly TEMP_RETENTION_DAYS=1
+
+# Cache dir settings
+# Path where fclones stores its cache files for use with the --cache flag.
+# When CACHE_PATH="" the --cache flag will not be used and no cache files will be stored.
+# This is optional but can significantly speed up subsequent runs by caching file metadata.
+# Please read the fclones documentation for caveats on using the cache!
+CACHE_PATH=""
+
+# Maximum number of files to display per folder in notifications
+# Set to 0 for unlimited, or any positive number to limit
+readonly MAX_FILES_DISPLAY=5
+
+# Display full filenames including file extensions in notifications
+# Set to true to show full filename with extension, false to show without extension
+readonly SHOW_FILE_EXTENSIONS=false
+
+# Maximum filename length in notifications before truncating
+# Filenames longer than this will be truncated with "..."
+readonly MAX_FILENAME_LENGTH=56
+
+# Log file settings
+LOG_PATH="/mnt/user/appdata/qbt-mover/fclones-logs"
+readonly LOG_RETENTION_DAYS=5
+
+# Search path groups
+# Format: folders["Display Name"]="path1${PATH_SEPARATOR}path2[${PATH_SEPARATOR}path3...]"
+# If PATH_SEPARATOR is not set, the script defaults to a space (" ") for backward compatibility with script version 1.0.0 and older.
+readonly PATH_SEPARATOR="|"
+# Example with spaces in path:
+# folders["Movies"]="/mnt/user/data folder/torrents/movies/|/mnt/user/data/media/movies/"
+declare -A folders
+folders["Media"]="/mnt/user/data/torrents/|/mnt/user/data/media/"

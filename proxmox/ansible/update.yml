@@ -1,0 +1,272 @@
+---
+- name: Update Proxmox host
+  hosts: pve
+  any_errors_fatal: true
+  tasks:
+    - name: Apt update cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    # Simulated first so the digest can name what changed; the real upgrade follows.
+    - name: List pending upgrades
+      ansible.builtin.shell: |
+        set -o pipefail
+        apt-get -s -o Debug::NoLocking=1 dist-upgrade | awk '
+          /^Inst / {
+            if ($3 ~ /^\[/) { old = substr($3, 2, length($3) - 2); new = substr($4, 2) }
+            else { old = "new"; new = substr($3, 2) }
+            print $2 " " old " -> " new
+          }'
+      args:
+        executable: /bin/bash
+      register: pkg_pending
+      changed_when: false
+
+    - name: Apt dist-upgrade
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
+    - name: Check reboot flag
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    # PVE doesn't reliably write reboot-required; running-vs-newest kernel is the real signal
+    - name: Check for pending kernel
+      ansible.builtin.shell: |
+        newest=$(ls /lib/modules | sort -V | tail -1)
+        running=$(uname -r)
+        [ "$newest" != "$running" ] && echo "kernel $running -> $newest" || true
+      register: kernel_pending
+      changed_when: false
+
+- name: Update LXC containers
+  hosts: containers
+  any_errors_fatal: true
+  tasks:
+    - name: Apt update cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: List pending upgrades
+      ansible.builtin.shell: |
+        set -o pipefail
+        apt-get -s -o Debug::NoLocking=1 dist-upgrade | awk '
+          /^Inst / {
+            if ($3 ~ /^\[/) { old = substr($3, 2, length($3) - 2); new = substr($4, 2) }
+            else { old = "new"; new = substr($3, 2) }
+            print $2 " " old " -> " new
+          }'
+      args:
+        executable: /bin/bash
+      register: pkg_pending
+      changed_when: false
+
+    - name: Apt dist-upgrade
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
+    - name: Check reboot flag
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+# App-level update, mirroring community-scripts ct/uptimekuma.sh update_script.
+# Same-major only: a major jump (2.x -> 3.x) is reported via the ping, not applied.
+- name: Update Uptime Kuma app
+  hosts: uptime-kuma
+  any_errors_fatal: true
+  vars:
+    kuma_dir: /opt/uptime-kuma
+  tasks:
+    - name: Read installed version
+      ansible.builtin.slurp:
+        src: "{{ kuma_dir }}/package.json"
+      register: kuma_pkg
+
+    - name: Fetch latest release tag
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/louislam/uptime-kuma/releases/latest
+        headers:
+          Accept: application/vnd.github+json
+      register: kuma_latest
+
+    - name: Compare versions
+      ansible.builtin.set_fact:
+        kuma_current: "{{ (kuma_pkg.content | b64decode | from_json).version }}"
+        kuma_target: "{{ kuma_latest.json.tag_name | regex_replace('^v', '') }}"
+
+    - name: Classify update
+      ansible.builtin.set_fact:
+        kuma_outdated: "{{ kuma_target is version(kuma_current, '>') }}"
+        kuma_same_major: "{{ kuma_target.split('.')[0] == kuma_current.split('.')[0] }}"
+
+    - name: Apply update
+      when: kuma_outdated | bool and kuma_same_major | bool
+      block:
+        - name: Stop service
+          ansible.builtin.systemd:
+            name: uptime-kuma
+            state: stopped
+
+        - name: Deploy release tarball over install (data/ untouched)
+          ansible.builtin.shell: |
+            set -euo pipefail
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' EXIT
+            curl -fsSL "https://github.com/louislam/uptime-kuma/archive/refs/tags/{{ kuma_latest.json.tag_name }}.tar.gz" \
+              | tar -xz -C "$tmp" --strip-components=1
+            cp -a "$tmp"/. {{ kuma_dir }}/
+          args:
+            executable: /bin/bash
+
+        - name: Install dependencies
+          ansible.builtin.command: npm install --omit dev
+          args:
+            chdir: "{{ kuma_dir }}"
+
+        - name: Download dist bundle
+          ansible.builtin.command: npm run download-dist
+          args:
+            chdir: "{{ kuma_dir }}"
+
+        - name: Start service
+          ansible.builtin.systemd:
+            name: uptime-kuma
+            state: started
+
+        - name: Wait for web UI
+          ansible.builtin.wait_for:
+            port: 3001
+            timeout: 90
+
+# Dead-man ping: only reached when every host above succeeded (any_errors_fatal
+# aborts the whole playbook otherwise), so a missed ping means the run failed.
+- name: Report results
+  hosts: pve
+  vars:
+    # Must be a double-quoted scalar: a literal '\n' inside a folded block's {{ }}
+    # stays an escaped backslash-n and reaches Discord as text.
+    nl: "\n"
+  tasks:
+    - name: Collect pending reboots
+      ansible.builtin.set_fact:
+        reboot_list: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}
+          {%- set kp = hostvars[h].kernel_pending.stdout | default('') | trim -%}
+          {%- if hostvars[h].reboot_required.stat.exists | default(false) or kp -%}
+          {%- set _ = out.append(h + (' (' + kp + ')' if kp else '')) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ out | join('; ') }}
+
+    - name: Count upgraded packages
+      ansible.builtin.set_fact:
+        pkg_total: >-
+          {%- set ns = namespace(n=0) -%}
+          {%- for h in groups['all'] -%}
+          {%- set ns.n = ns.n + (hostvars[h].pkg_pending.stdout_lines | default([]) | reject('equalto', '') | list | length) -%}
+          {%- endfor -%}
+          {{ ns.n }}
+
+    # Per-host code block, capped at 12 lines so a big upgrade can't blow Discord's limits.
+    - name: Compose upgrade summary
+      ansible.builtin.set_fact:
+        upgrade_summary: >-
+          {%- set out = [] -%}
+          {%- for h in groups['all'] -%}
+          {%- set lines = hostvars[h].pkg_pending.stdout_lines | default([]) | reject('equalto', '') | list -%}
+          {%- if lines -%}
+          {%- set shown = lines[:12] -%}
+          {%- set extra = lines | length - shown | length -%}
+          {%- set _ = out.append('**' ~ h ~ '** — ' ~ lines | length ~ ' package(s)' ~ nl ~ '```' ~ nl ~ shown | join(nl) ~ (nl ~ '… +' ~ extra ~ ' more' if extra > 0 else '') ~ nl ~ '```') -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ out | join(nl) }}
+
+    - name: Compose Uptime Kuma line
+      ansible.builtin.set_fact:
+        kuma_major_pending: >-
+          {{ (hostvars['uptime-kuma'].kuma_outdated | default(false) | bool)
+             and not (hostvars['uptime-kuma'].kuma_same_major | default(true) | bool) }}
+        kuma_line: >-
+          {%- set k = hostvars['uptime-kuma'] -%}
+          {%- if k.kuma_outdated | default(false) | bool and k.kuma_same_major | default(false) | bool -%}
+          Uptime Kuma updated {{ k.kuma_current }} → {{ k.kuma_target }}
+          {%- elif k.kuma_outdated | default(false) | bool -%}
+          ⚠️ Uptime Kuma **major** update {{ k.kuma_current }} → {{ k.kuma_target }} pending — apply manually
+          {%- endif -%}
+
+    - name: Compose digest body
+      ansible.builtin.set_fact:
+        digest_body: >-
+          {%- set parts = [] -%}
+          {%- if upgrade_summary | trim | length > 0 -%}
+          {%- set _ = parts.append(upgrade_summary | trim) -%}
+          {%- endif -%}
+          {%- if kuma_line | trim | length > 0 -%}
+          {%- set _ = parts.append(kuma_line | trim) -%}
+          {%- endif -%}
+          {%- if reboot_list | trim | length > 0 -%}
+          {%- set _ = parts.append('🔁 **Reboot required:** ' ~ reboot_list | trim) -%}
+          {%- endif -%}
+          {{ parts | join(nl ~ nl) }}
+
+    # Built as a JSON string, not a dict, so `color` stays an int -- Discord 400s on a quoted one.
+    - name: Build Discord payload
+      ansible.builtin.set_fact:
+        discord_payload: >-
+          {{ {
+               'username': 'Ansible',
+               'embeds': [{
+                 'title': 'Nightly updates — ' ~ inventory_hostname,
+                 'color': (15105570 if (reboot_list | trim | length > 0 or kuma_major_pending | bool) else 3066993),
+                 'description': digest_body | truncate(3900, true, nl ~ '… (truncated)')
+               }]
+             } | to_json }}
+      when: digest_body | trim | length > 0
+
+    # Non-fatal: a Discord outage must not abort the run before the dead-man ping below.
+    - name: Post digest to Discord
+      ansible.builtin.uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        headers:
+          Content-Type: application/json
+        body: "{{ discord_payload }}"
+        status_code: [200, 204]
+      register: discord_post
+      failed_when: false
+      when:
+        - discord_webhook_url | default('') | length > 0
+        - digest_body | trim | length > 0
+
+    - name: Compose status message
+      ansible.builtin.set_fact:
+        kuma_msg: >-
+          updates OK
+          {%- if pkg_total | int > 0 %}; {{ pkg_total | int }} package(s) upgraded{% endif %}
+          {%- if reboot_list | trim | length > 0 %}; reboot needed: {{ reboot_list | trim }}{% endif %}
+          {%- set k = hostvars['uptime-kuma'] -%}
+          {%- if k.kuma_outdated | default(false) | bool and k.kuma_same_major | default(false) | bool
+          %}; kuma {{ k.kuma_current }}->{{ k.kuma_target }}
+          {%- elif k.kuma_outdated | default(false) | bool
+          %}; kuma MAJOR update to {{ k.kuma_target }} pending (manual)
+          {%- endif %}
+          {%- if (discord_post.status | default(204)) not in [200, 204] %}; DISCORD POST FAILED ({{ discord_post.status | default('n/a') }}){% endif %}
+
+    - name: Ping push monitor
+      ansible.builtin.uri:
+        url: "{{ kuma_push_url }}?status=up&msg={{ kuma_msg | trim | urlencode }}"
+      when: kuma_push_url | default('') | length > 0
+
+    # down = Discord alert + red tile until the reboot happens; up clears it
+    - name: Ping reboot monitor
+      ansible.builtin.uri:
+        url: >-
+          {{ kuma_reboot_url }}?status={{ 'down' if (reboot_list | trim | length > 0) else 'up'
+          }}&msg={{ (('reboot needed: ' + reboot_list | trim) if (reboot_list | trim | length > 0) else 'no reboot pending') | urlencode }}
+      when: kuma_reboot_url | default('') | length > 0

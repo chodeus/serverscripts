@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Ansible update run (PVE host + LXC containers)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/ansible
+Environment=ANSIBLE_CONFIG=/root/ansible/ansible.cfg
+ExecStart=/usr/bin/ansible-playbook /root/ansible/update.yml
