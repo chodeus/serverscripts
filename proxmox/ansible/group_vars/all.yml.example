@@ -1,0 +1,13 @@
+# Copy to group_vars/all.yml and fill in. Keep the real file 0600 — it holds secrets.
+
+# Uptime Kuma push-monitor URL for the dead-man ping (empty = skip the ping).
+# Create in Kuma: Add New Monitor -> type "Push", copy the URL here.
+kuma_push_url: ""
+
+# Second push monitor: playbook sends status=down while a reboot is pending
+# (Kuma -> Discord on the up->down flip), status=up once clear.
+kuma_reboot_url: ""
+
+# Discord webhook for the nightly change digest (empty = skip the post).
+# Same webhook as the PVE "discord" notification target -- rotate both together.
+discord_webhook_url: ""

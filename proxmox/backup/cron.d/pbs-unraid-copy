@@ -1,0 +1,2 @@
+# Daily cold copy of PBS datastore to Unraid, after the 02:30 backup
+0 4 * * * root /usr/local/sbin/pbs-unraid-copy.sh

@@ -1,0 +1,20 @@
+all:
+  children:
+    pve:
+      hosts:
+        pvehost:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+    containers:
+      hosts:
+        uptime-kuma:
+          proxmox_vmid: 101
+        pbs:
+          proxmox_vmid: 102
+      vars:
+        ansible_connection: community.proxmox.proxmox_pct_remote
+        ansible_host: localhost
+        ansible_user: root
+        ansible_private_key_file: /root/.ssh/id_rsa
+        ansible_host_key_checking: false
+        ansible_python_interpreter: /usr/bin/python3
