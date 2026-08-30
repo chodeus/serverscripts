@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Bespoke scripts that run as ROOT on live Proxmox and Unraid hosts: UPS
+# shutdown, host/flash backups, cache and qbit watchdogs, mover hooks.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_instructions:
+    - path: "**/*.sh"
+      instructions: |-
+        These run as root on live hosts. A bug here takes a machine down or destroys data — review accordingly.
+        - BASH STRICT-MODE TRAPS under `set -euo pipefail`: a `cmd | grep -q x` in an `if` inverts what you think you are testing and a non-match aborts the script; `((count++))` returns exit status 1 when count is 0 and kills the run; `local x=$(cmd)` masks cmd's failure because `local` supplies the exit status. Command substitutions inside conditionals need explicit `|| true` where a non-zero result is expected.
+        - QUOTE EVERY EXPANSION. `rm -rf $DIR/` with $DIR empty or unset removes the filesystem root. Any destructive path must be validated non-empty AND confined before use — `[ -n "$DIR" ] && [ -d "$DIR" ]` before an rm, and never build a delete target by string concatenation without checking the result.
+        - FAIL CLOSED ON AN UNREAD SENSOR. A guard that acts on a temperature, UPS state, disk usage or process check must treat "could not read it" as "do nothing", never as the safe value. An empty or errored read that falls through to a shutdown, a delete or a prune is the defect.
+        - DISTINGUISH A TRANSIENT SIGNAL FROM A REAL ONE. A UPS self-test or calibration reports a battery/on-battery state that is not an outage; acting on it powers off a healthy host. Require the condition to persist, or match the specific real-outage state, before an irreversible action.
+        - RECOVERY BEFORE DESTRUCTION. Never prune, rotate or delete the previous backup until the new one is confirmed complete and non-empty. A backup step whose failure is swallowed, then followed by a prune, converts one bad run into permanent loss.
+        - A WATCHDOG MUST BE ABLE TO FAIL. `|| true`, a swallowed error, or an unconditional `exit 0` turns a watchdog into a script that always looks healthy while checking nothing. Its failure path is the whole point.
+        - Cron/hook context: no interactive prompts, do not assume a TTY or a login shell's PATH (use absolute binary paths), and be idempotent — these get re-run and can overlap, so take a lock rather than assuming a single instance.
+        - Never echo a token, API key or password, including under `set -x`.
+    - path: "proxmox/**/*.sh"
+      instructions: |-
+        Proxmox host scripts — power control and host/PBS backups:
+        - A poweroff or reboot is irreversible from the script's point of view: it must be gated on a verified, persisted condition, and must not fire from a failed or ambiguous read.
+        - Backup targets must be verified reachable and writable BEFORE the old copy is touched, and a partial transfer must not be treated as success.
+    - path: "unraid/**/*.sh"
+      instructions: |-
+        Unraid user scripts and mover hooks:
+        - Mover tuning hooks are evaluated only when the scheduler runs them, so a condition added here does not take effect until the next scheduled window — a change that assumes immediate effect is wrong.
+        - Array and cache paths differ between /mnt/user, /mnt/cache and /mnt/diskN; a script that mixes them can copy across the shfs layer or delete the wrong copy. Confirm which layer each path targets.
+        - Respect the PUID/PGID/umask the rest of the stack uses; a root-created file the containers cannot read is a silent breakage.
+    - path: "README.md"
+      instructions: |-
+        Table-only. Do not suggest adding rationale prose, "why" sections, background,
+        or placeholder text — the format is deliberate.
+
+  tools:
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
