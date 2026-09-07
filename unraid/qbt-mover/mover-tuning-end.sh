@@ -351,6 +351,30 @@ check_and_install_fclones() {
     return 0
 }
 
+run_duplicate_finder() {
+    # Prerequisites live here, not in validate_config — they must not block the resume
+    if [[ "$ENABLE_AUTO_INSTALLER" == true ]]; then
+        if ! check_and_install_fclones; then
+            log "⚠ Skipping $DUPLICATE_FINDER_NAME: fclones unavailable"
+            notify "$DUPLICATE_FINDER_NAME" "Skipped @ $(date +%H:%M:%S)"
+            return 0
+        fi
+    elif [[ ! -x "${QBIT_MOVER_PATH}fclones.sh" ]]; then
+        log "⚠ Skipping $DUPLICATE_FINDER_NAME: ${QBIT_MOVER_PATH}fclones.sh missing or not executable"
+        notify "$DUPLICATE_FINDER_NAME" "Skipped @ $(date +%H:%M:%S)"
+        return 0
+    fi
+
+    log "Running duplicate finder..."
+    if bash "${QBIT_MOVER_PATH}fclones.sh"; then
+        log "✓ $DUPLICATE_FINDER_NAME completed"
+        notify "$DUPLICATE_FINDER_NAME" "Completed @ $(date +%H:%M:%S)"
+    else
+        log "⚠ $DUPLICATE_FINDER_NAME failed"
+        notify "$DUPLICATE_FINDER_NAME" "Failed @ $(date +%H:%M:%S)"
+    fi
+}
+
 # ================================
 # VALIDATION
 # ================================
@@ -378,7 +402,6 @@ validate_config() {
     # Validate paths and values
     [[ "$DAYS_FROM" -ge 2 ]] || error "DAYS_FROM must be at least 2"
     [[ "$DAYS_TO" -ge "$DAYS_FROM" ]] || error "DAYS_TO must be >= DAYS_FROM"
-    [[ -d "$CACHE_MOUNT" ]] || error "Cache mount not found: $CACHE_MOUNT"
     [[ -f "${QBIT_MOVER_PATH}mover.py" ]] || error "mover.py not found: ${QBIT_MOVER_PATH}mover.py"
 
     # Validate instance configuration
@@ -409,18 +432,6 @@ validate_config() {
         [[ -n "${QBIT_PASS_1:-}" ]] || error "QBIT_PASS_1 is not set"
 
         log "✓ Using legacy configuration"
-    fi
-
-    # Validate duplicate finder if enabled
-    if [[ "$ENABLE_DUPLICATE_FINDER" == true ]]; then
-        if [[ "$ENABLE_AUTO_INSTALLER" == true ]]; then
-            check_and_install_fclones || return 1
-        else
-            [[ -f "${QBIT_MOVER_PATH}fclones.sh" ]] || \
-                error "Duplicate finder script not found: ${QBIT_MOVER_PATH}fclones.sh"
-            [[ -x "${QBIT_MOVER_PATH}fclones.sh" ]] || \
-                error "Duplicate finder script not executable: ${QBIT_MOVER_PATH}fclones.sh"
-        fi
     fi
 
     log "✓ Validation completed"
@@ -509,14 +520,7 @@ main() {
 
     # Run duplicate finder if enabled
     if [[ "$ENABLE_DUPLICATE_FINDER" == true ]]; then
-        log "Running duplicate finder..."
-        if bash "${QBIT_MOVER_PATH}fclones.sh"; then
-            log "✓ $DUPLICATE_FINDER_NAME completed"
-            notify "$DUPLICATE_FINDER_NAME" "Completed @ $(date +%H:%M:%S)"
-        else
-            log "⚠ $DUPLICATE_FINDER_NAME failed"
-            notify "$DUPLICATE_FINDER_NAME" "Failed @ $(date +%H:%M:%S)"
-        fi
+        run_duplicate_finder
     fi
 
     # Start Docker containers if enabled
