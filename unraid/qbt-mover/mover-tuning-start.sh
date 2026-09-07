@@ -1,5 +1,5 @@
 #!/bin/bash
-# mover-tuning-start.sh v1.3.3 by BZ — https://github.com/TRaSH-Guides/Guides
+# mover-tuning-start.sh v1.3.4 by BZ — https://github.com/TRaSH-Guides/Guides
 # Local changes: see unraid/README.md
 # Requires: bash 4+, python3 (venv auto-built), curl, ca.mover.tuning plugin, mover-tuning.cfg alongside
 set -euo pipefail # Exit on error, undefined variables, and pipe failures
@@ -7,12 +7,12 @@ trap '' PIPE  # Move button closes stdout mid-run; SIGPIPE must not kill us
 
 # =======================================
 # Script: qBittorrent Cache Mover - Start
-# Version: 1.3.3
-# Updated: 20260614
+# Version: 1.3.4
+# Updated: 20260902
 # =======================================
 
 # Script version and update check URLs
-readonly SCRIPT_VERSION="1.3.3"
+readonly SCRIPT_VERSION="1.3.4"
 readonly SCRIPT_RAW_URL="https://raw.githubusercontent.com/TRaSH-Guides/Guides/refs/heads/master/includes/downloaders/mover-tuning-start.sh"
 readonly CONFIG_RAW_URL="https://raw.githubusercontent.com/TRaSH-Guides/Guides/refs/heads/master/includes/downloaders/mover-tuning.cfg"
 
@@ -382,21 +382,26 @@ run_auto_installer() {
 
     if "$venv_python" -m pip --version >/dev/null 2>&1; then
         # Always upgrade pip (idempotent) — pre-22.2 pip has no --dry-run, so any pre-check stalls forever
-        local pip_upgrade_ok=false
         log "Upgrading pip..."
         if "$venv_python" -m pip install --upgrade pip --quiet; then
             set_ownership "$VENV_PATH"
-            pip_upgrade_ok=true
-            log "✓ Pip is $("$venv_python" -m pip --version | awk '{print $2}')"
         else
-            log "⚠ Warning: Failed to upgrade pip; continuing with existing version ($("$venv_python" -m pip --version | awk '{print $2}'))"
+            log "⚠ Warning: Failed to upgrade pip; continuing with existing version"
         fi
+
+        # Read the resulting version: the upgrade exits 0 even when pip stays below 22.2
+        local pip_version supports_dry_run=false
+        pip_version=$("$venv_python" -m pip --version 2>/dev/null | awk '{print $2}') || true
+        if [[ -n "$pip_version" && "$(printf '%s\n' "$pip_version" "22.2" | sort -V | head -n1)" == "22.2" ]]; then
+            supports_dry_run=true
+        fi
+        log "✓ Pip is ${pip_version:-unknown}"
 
         # Install/upgrade qbittorrent-api using the same Python that will run mover.py.
         if "$venv_python" -c "import qbittorrentapi" 2>/dev/null; then
             log "✓ qbittorrent-api installed ($("$venv_python" -m pip show qbittorrent-api 2>/dev/null | awk '/Version:/ {print $2}'))"
 
-            if [[ "$pip_upgrade_ok" == true ]]; then
+            if [[ "$supports_dry_run" == true ]]; then
                 # Capture then grep — a piped grep -q SIGPIPEs pip under pipefail (#2862)
                 local qbt_dry_out
                 qbt_dry_out=$("$venv_python" -m pip install --dry-run --upgrade qbittorrent-api 2>&1) || true
@@ -409,7 +414,7 @@ run_auto_installer() {
                     log "✓ qbittorrent-api is up to date"
                 fi
             else
-                # pip upgrade failed → --dry-run can't be trusted (needs pip >= 22.2); just upgrade
+                # pip < 22.2 (or unreadable) → no --dry-run here; just upgrade
                 log "Ensuring qbittorrent-api is up to date..."
                 "$venv_python" -m pip install qbittorrent-api --upgrade --quiet || log "⚠ Warning: Failed to upgrade qbittorrent-api"
                 set_ownership "$VENV_PATH"
