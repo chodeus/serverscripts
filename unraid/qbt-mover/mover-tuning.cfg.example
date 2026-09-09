@@ -20,12 +20,17 @@ readonly QBIT_MOVER_PATH="/mnt/user/appdata/qbt-mover/"  # Path to mover.py
 
 # qBittorrent instances
 # Supports unlimited qBittorrent instances
-# Arrays NAMES, HOSTS, USERS and PASSWORDS must all have the same length
-# NAMES array is optional - if omitted, instances will be named "qBit-Instance-1", "qBit-Instance-2", etc.
+# Arrays HOSTS, USERS and PASSWORDS must all have the same length
+# Arrays NAMES, API_KEYS and CA_BUNDLES are optional but if present must also have the same length as HOSTS
+# NAMES array, if omitted, instances will be named "qBit-Instance-1", "qBit-Instance-2", etc.
+# API_KEYS, if specified, will be used instead of USER/PASSWORD for authentication. If both are specified, API_KEYS will take precedence.
+# API keys need qBittorrent 5.2.0+ (Options -> WebUI -> API Key). Use "" for instances that authenticate with USER/PASSWORD.
+# qui users: put the client proxy URL in HOSTS instead (e.g. "qui:7476/proxy/<client-api-key>") and leave API_KEYS empty.
 readonly NAMES=("qBittorrent")  # qBittorrent instance names
 readonly HOSTS=("localhost:8080")  # qBittorrent host:port
 readonly USERS=("admin")  # qBittorrent usernames
 readonly PASSWORDS=("CHANGEME")  # qBittorrent passwords
+readonly API_KEYS=("")  # qBittorrent WebUI API keys
 readonly CA_BUNDLES=("")  # Path to CA bundle for SSL with self signed cert
 
 # Docker container management (OPTIONAL)
