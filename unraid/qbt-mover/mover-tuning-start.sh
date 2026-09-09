@@ -1,5 +1,5 @@
 #!/bin/bash
-# mover-tuning-start.sh v1.3.4 by BZ — https://github.com/TRaSH-Guides/Guides
+# mover-tuning-start.sh v1.3.5 by BZ — https://github.com/TRaSH-Guides/Guides
 # Local changes: see unraid/README.md
 # Requires: bash 4+, python3 (venv auto-built), curl, ca.mover.tuning plugin, mover-tuning.cfg alongside
 set -euo pipefail # Exit on error, undefined variables, and pipe failures
@@ -7,12 +7,12 @@ trap '' PIPE  # Move button closes stdout mid-run; SIGPIPE must not kill us
 
 # =======================================
 # Script: qBittorrent Cache Mover - Start
-# Version: 1.3.4
-# Updated: 20260902
+# Version: 1.3.5
+# Updated: 20260909
 # =======================================
 
 # Script version and update check URLs
-readonly SCRIPT_VERSION="1.3.4"
+readonly SCRIPT_VERSION="1.3.5"
 readonly SCRIPT_RAW_URL="https://raw.githubusercontent.com/TRaSH-Guides/Guides/refs/heads/master/includes/downloaders/mover-tuning-start.sh"
 readonly CONFIG_RAW_URL="https://raw.githubusercontent.com/TRaSH-Guides/Guides/refs/heads/master/includes/downloaders/mover-tuning.cfg"
 
@@ -101,6 +101,7 @@ get_instance_details() {
         INSTANCE_HOST="${HOSTS[$index]}"
         INSTANCE_USER="${USERS[$index]}"
         INSTANCE_PASSWORD="${PASSWORDS[$index]}"
+        INSTANCE_API_KEY="${API_KEYS[$index]:-}"
         INSTANCE_CA_BUNDLE="${CA_BUNDLES[$index]:-}"
     else
         # Legacy format: map index to old variables
@@ -109,12 +110,14 @@ get_instance_details() {
             INSTANCE_HOST="${QBIT_HOST_1}"
             INSTANCE_USER="${QBIT_USER_1}"
             INSTANCE_PASSWORD="${QBIT_PASS_1}"
+            INSTANCE_API_KEY="${QBIT_API_KEY_1:-}"
             INSTANCE_CA_BUNDLE="${QBIT_CA_BUNDLE_1:-}"
         elif [[ $index -eq 1 ]]; then
             INSTANCE_NAME="${QBIT_NAME_2}"
             INSTANCE_HOST="${QBIT_HOST_2}"
             INSTANCE_USER="${QBIT_USER_2}"
             INSTANCE_PASSWORD="${QBIT_PASS_2}"
+            INSTANCE_API_KEY="${QBIT_API_KEY_2:-}"
             INSTANCE_CA_BUNDLE="${QBIT_CA_BUNDLE_2:-}"
         else
             error "Invalid instance index: $index"
@@ -505,6 +508,14 @@ validate_config() {
             fi
         fi
 
+        # API_KEYS array is optional, but if present should match
+        if [[ -v API_KEYS ]] && [[ ${#API_KEYS[@]} -gt 0 ]]; then
+            if [[ ${#API_KEYS[@]} -ne ${#HOSTS[@]} ]]; then
+                notify "Configuration Error" "API_KEYS array length (${#API_KEYS[@]}) doesn't match HOSTS (${#HOSTS[@]})"
+                error "API_KEYS array length doesn't match HOSTS"
+            fi
+        fi
+
         # CA_BUNDLES array is optional, but if present should match
         if [[ -v CA_BUNDLES ]] && [[ ${#CA_BUNDLES[@]} -gt 0 ]]; then
             if [[ ${#CA_BUNDLES[@]} -ne ${#HOSTS[@]} ]]; then
@@ -528,7 +539,7 @@ validate_config() {
 # PROCESS QBITTORRENT INSTANCE
 # ================================
 process_qbit_instance() {
-    local name="$1" host="$2" user="$3" password="$4" ca_bundle="${5:-}"
+    local name="$1" host="$2" user="$3" password="$4" api_key="${5:-}" ca_bundle="${6:-}"
 
     log "Processing $name..."
 
@@ -550,6 +561,11 @@ process_qbit_instance() {
         ca_bundle_args=(--ca-bundle "$ca_bundle")
     fi
 
+    local auth_args=(--user "$user" --password "$password")
+    if [[ -n "$api_key" ]]; then
+        auth_args=(--api-key "$api_key")
+    fi
+
     # Per-instance filename: one shared log would be truncated by each instance in turn
     local log_file="${QBIT_MOVER_PATH}mover-py-start-${name//[^A-Za-z0-9._-]/_}.log"
 
@@ -557,8 +573,7 @@ process_qbit_instance() {
     if $python_cmd "$MOVER_SCRIPT" \
         --pause \
         --host "$host" \
-        --user "$user" \
-        --password "$password" \
+        "${auth_args[@]}" \
         --cache-mount "$CACHE_MOUNT" \
         --days_from "$DAYS_FROM" \
         --days_to "$DAYS_TO" \
@@ -626,7 +641,7 @@ main() {
     for ((i=0; i<instance_count; i++)); do
         get_instance_details "$i"
 
-        process_qbit_instance "$INSTANCE_NAME" "$INSTANCE_HOST" "$INSTANCE_USER" "$INSTANCE_PASSWORD" "$INSTANCE_CA_BUNDLE" || failed_instances=$((failed_instances + 1))
+        process_qbit_instance "$INSTANCE_NAME" "$INSTANCE_HOST" "$INSTANCE_USER" "$INSTANCE_PASSWORD" "$INSTANCE_API_KEY" "$INSTANCE_CA_BUNDLE" || failed_instances=$((failed_instances + 1))
     done
 
     # Summary

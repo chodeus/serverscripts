@@ -25,5 +25,6 @@ Local changes:
 - The Docker container list is an empty list, not a list with one blank entry.
 - The duplicate finder runs after the resume and cannot stop it.
 - The end script no longer checks for the cache pool, which it does not use.
+- qBittorrent can authenticate with a WebUI API key instead of a username and password.
 
 Version numbers left unchanged from upstream script at point in time.
