@@ -1,5 +1,5 @@
 #!/bin/bash
-# mover-tuning-end.sh v1.3.5 by BZ — https://github.com/TRaSH-Guides/Guides
+# mover-tuning-end.sh v1.3.6 by BZ — https://github.com/TRaSH-Guides/Guides
 # Local changes: see unraid/README.md
 # Requires: bash 4+, python3 (venv auto-built), curl, ca.mover.tuning plugin, mover-tuning.cfg alongside
 set -euo pipefail # Exit on error, undefined variables, and pipe failures
@@ -7,12 +7,12 @@ trap '' PIPE  # Move button closes stdout mid-run; SIGPIPE must not kill us
 
 # =====================================
 # Script: qBittorrent Cache Mover - End
-# Version: 1.3.5
+# Version: 1.3.6
 # Updated: 20260909
 # =====================================
 
 # Script version and update check URLs
-readonly SCRIPT_VERSION="1.3.5"
+readonly SCRIPT_VERSION="1.3.6"
 readonly SCRIPT_RAW_URL="https://raw.githubusercontent.com/TRaSH-Guides/Guides/refs/heads/master/includes/downloaders/mover-tuning-end.sh"
 
 # Get the directory where the script is located
