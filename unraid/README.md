@@ -26,5 +26,6 @@ Local changes:
 - The duplicate finder runs after the resume and cannot stop it.
 - The end script no longer checks for the cache pool, which it does not use.
 - qBittorrent can authenticate with a WebUI API key instead of a username and password.
+- Every torrent older than three days with files on the cache is paused, not only those up to ten days old.
 
 Version numbers left unchanged from upstream script at point in time.

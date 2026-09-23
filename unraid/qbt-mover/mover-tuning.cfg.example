@@ -14,7 +14,7 @@ readonly ENABLE_AUTO_INSTALLER=true  # Set to false to disable qBit-Api and qBit
 # qBit-Mover Settings
 # >>> NOTE: Setting "DAYS_FROM" below 2 days may not work properly <<<
 readonly DAYS_FROM=3  # How old torrents must be (in days) before they're paused and moved (Must be at least 2 days)
-readonly DAYS_TO=10    # Maximum age (days) for torrent selection (must be >= DAYS_FROM)
+readonly DAYS_TO=3650    # Maximum age (days) for torrent selection (must be >= DAYS_FROM)
 readonly CACHE_MOUNT="/mnt/cache/"  # Cache mount point in Unraid
 readonly QBIT_MOVER_PATH="/mnt/user/appdata/qbt-mover/"  # Path to mover.py
 
