@@ -53,5 +53,5 @@ logger -t cache-watchdog "$POOL at ${pct}% (>= ${TRIGGER_PCT}%) - starting Mover
 /usr/local/emhttp/webGui/scripts/notify -e "Cache Watchdog" -s "Cache at ${pct}% - auto-starting mover" \
     -d "Pool '$POOL' crossed ${TRIGGER_PCT}% between scheduled runs. Mover Tuning mover started (plugin filters apply)." \
     -i warning
-"$MOVER" start 2>&1
+"$MOVER" start |& logger -t move
 logger -t cache-watchdog "Mover Tuning run finished ($POOL was ${pct}% at trigger)"
