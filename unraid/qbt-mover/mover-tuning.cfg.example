@@ -75,7 +75,7 @@ readonly FCLONES_PATH="fclones"
 readonly FCLONES_ARGS="--one-fs --hidden --follow-links"
 
 # File patterns to match (space-separated)
-readonly FILE_PATTERNS="*.mkv *.mp4 *.avi"
+readonly FILE_PATTERNS="*.mkv *.mp4 *.avi *.m4v *.mov *.m2ts"
 
 # Temp file settings
 # Path where fclones saves the output of group the group command which is then passed to link.
