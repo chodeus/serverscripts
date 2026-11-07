@@ -1,11 +1,11 @@
 #!/bin/bash
-# fclones.sh v1.2.1 by BZ — https://gist.github.com/BaukeZwart/b570ce6b6165c4f0b64c5b98d9d3af1e
+# fclones.sh v1.2.2 by BZ — https://gist.github.com/BaukeZwart/b570ce6b6165c4f0b64c5b98d9d3af1e
 # Local changes: see unraid/README.md
 # Requires: bash 4.2+, fclones, curl or wget, Unraid notify, mover-tuning.cfg alongside
 # ================================
 # Script: fclones run
-# Version: 1.2.1
-# Updated: 20260921
+# Version: 1.2.2
+# Updated: 20261108
 # ================================
 
 # When running this script standalone, ensure that the mover-tuning.cfg file is in the same folder as the script.
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/mover-tuning.cfg"
 
 # Script version and update check URLs
-readonly SCRIPT_VERSION="1.2.1"
+readonly SCRIPT_VERSION="1.2.2"
 readonly MIN_CONFIG_VERSION="1.2.0"
 readonly GIST_RAW_URL="https://gist.githubusercontent.com/BaukeZwart/b570ce6b6165c4f0b64c5b98d9d3af1e/raw/fclones.sh"
 
@@ -37,6 +37,7 @@ total_space_saved=0
 clean_folders=()
 hardlink_folders=()
 error_folders=()
+cross_disk_folders=()
 
 # ================================
 # FUNCTIONS
@@ -333,6 +334,7 @@ get_file_size() {
 
 # Function to get a unique identity (device:inode) for a file.
 # Paths that are already hardlinked to each other share the same identity.
+# /mnt/user (shfs) reports one device for all disks and links across them itself.
 get_file_id() {
     local file_path="$1"
     local id
@@ -342,10 +344,13 @@ get_file_id() {
 }
 
 # Evaluate the duplicate set currently held in current_group_files.
-# Space saved = (number of DISTINCT inodes - 1) * file size, because paths that
-# already share an inode (existing hardlinks) free no additional space when linked.
-# A set where every path already shares one inode has nothing to link and is skipped.
-# Reads: current_group_files. Updates: space_saved_this_group, linked_files, seen_files.
+# Hardlinks can only be made within one disk, so savings are counted per disk:
+# space saved = sum over disks of (DISTINCT inodes on that disk - 1) * file size.
+# Paths that already share an inode free no additional space when linked.
+# A set that spans disks is recorded in cross_disk_files; only the part that can
+# be linked on each disk counts. A set with nothing left to link is skipped.
+# Reads: current_group_files.
+# Updates: space_saved_this_group, linked_files, cross_disk_files, seen_files.
 process_current_group() {
     [[ ${#current_group_files[@]} -gt 1 ]] || return 0
 
@@ -356,19 +361,23 @@ process_current_group() {
     file_size=$(get_file_size "$first_file") || return 0
     [[ $file_size -gt 0 ]] || return 0
 
-    local -A unique_inodes=()
-    local group_file file_id
+    local -A unique_inodes=() inodes_per_dev=()
+    local group_file file_id dev
     for group_file in "${current_group_files[@]}"; do
         file_id=$(get_file_id "$group_file")
-        [[ -n "$file_id" ]] && unique_inodes["$file_id"]=1
+        [[ -n "$file_id" ]] || continue
+        [[ -n "${unique_inodes[$file_id]}" ]] && continue
+        unique_inodes["$file_id"]=1
+        dev="${file_id%%:*}"
+        inodes_per_dev["$dev"]=$((${inodes_per_dev[$dev]:-0} + 1))
     done
 
-    local unique_count=${#unique_inodes[@]}
-    [[ $unique_count -gt 1 ]] || return 0
+    # Duplicates that can actually be replaced by a hardlink (same disk only)
+    local linkable=0
+    for dev in "${!inodes_per_dev[@]}"; do
+        linkable=$((linkable + inodes_per_dev[$dev] - 1))
+    done
 
-    space_saved_this_group=$((space_saved_this_group + (unique_count - 1) * file_size))
-
-    # Only add the first file from the group (represents the duplicate set)
     local filename display_name
     filename=$(basename "$first_file")
     if [[ "$SHOW_FILE_EXTENSIONS" == "true" ]]; then
@@ -377,6 +386,17 @@ process_current_group() {
         display_name="${filename%.*}"
     fi
 
+    # Copies on different disks can never be linked: note them, not an error
+    if [[ ${#inodes_per_dev[@]} -gt 1 && -z "${seen_cross_disk[$display_name]}" ]]; then
+        cross_disk_files+=("$display_name")
+        seen_cross_disk["$display_name"]=1
+    fi
+
+    [[ $linkable -gt 0 ]] || return 0
+
+    space_saved_this_group=$((space_saved_this_group + linkable * file_size))
+
+    # Only add the first file from the group (represents the duplicate set)
     # Only add if we haven't seen this filename before
     if [[ -z "${seen_files[$display_name]}" ]]; then
         linked_files+=("$display_name")
@@ -391,6 +411,9 @@ scan_group_report() {
     current_group_files=()
     unset seen_files
     declare -gA seen_files=()
+    cross_disk_files=()
+    unset seen_cross_disk
+    declare -gA seen_cross_disk=()
 
     local line
     while IFS= read -r line; do
@@ -444,6 +467,26 @@ recount_after_link() {
     for name in "${!unlinked[@]}"; do
         log_msg WARN "  Not linked: $name"
     done
+}
+
+# Log duplicate sets whose copies are on different disks and remember the count
+# for the notification. These can't be hardlinked, so they are not errors.
+report_cross_disk() {
+    [[ ${#cross_disk_files[@]} -gt 0 ]] || return 0
+    local name
+    for name in "${cross_disk_files[@]}"; do
+        log_msg INFO "  Skipped (copies on different disks): $name"
+    done
+    cross_disk_folders+=("$group_name (${#cross_disk_files[@]})")
+}
+
+# Join arguments with ", " (IFS only joins with its first character)
+join_list() {
+    local out="" item
+    for item in "$@"; do
+        out+="${out:+, }$item"
+    done
+    printf '%s' "$out"
 }
 
 # Function to build notification content
@@ -507,17 +550,11 @@ build_notification() {
 
         # Add clean folders if any
         if [[ ${#clean_folders[@]} -gt 0 ]]; then
-            content+="<br>✅ <b>No duplicates:</b> $(
-                IFS=', '
-                echo "${clean_folders[*]}"
-            )<br>"
+            content+="<br>✅ <b>No duplicates:</b> $(join_list "${clean_folders[@]}")<br>"
         fi
 
         if [[ ${#error_folders[@]} -gt 0 ]]; then
-            content+="<br>❌ <b>Errors:</b> $(
-                IFS=', '
-                echo "${error_folders[*]}"
-            )<br>"
+            content+="<br>❌ <b>Errors:</b> $(join_list "${error_folders[@]}")<br>"
         fi
 
         # Add summary line
@@ -530,22 +567,22 @@ build_notification() {
             content+="<br>💾 <b>Space Saved:</b> ${formatted_total_space}"
         fi
     elif [[ ${#error_folders[@]} -gt 0 ]]; then
-        content="❌ <b>Errors:</b> $(
-            IFS=', '
-            echo "${error_folders[*]}"
-        )"
+        content="❌ <b>Errors:</b> $(join_list "${error_folders[@]}")"
         if [[ ${#clean_folders[@]} -gt 0 ]]; then
-            content+="<br>✅ <b>No duplicates:</b> $(
-                IFS=', '
-                echo "${clean_folders[*]}"
-            )"
+            content+="<br>✅ <b>No duplicates:</b> $(join_list "${clean_folders[@]}")"
         fi
         content+="<br>⏱️ ${time_formatted}"
     else
-        content="✅ <b>No duplicates found:</b> $(
-            IFS=', '
-            echo "${clean_folders[*]}"
-        )<br>📊 <b>Processed:</b> ${processed_groups}/${total_groups} folders<br>⏱️ ${time_formatted}"
+        # Folders whose only duplicates are on different disks are not in clean_folders
+        if [[ ${#clean_folders[@]} -gt 0 ]]; then
+            content="✅ <b>No duplicates found:</b> $(join_list "${clean_folders[@]}")<br>"
+        fi
+        content+="📊 <b>Processed:</b> ${processed_groups}/${total_groups} folders<br>⏱️ ${time_formatted}"
+    fi
+
+    # Duplicates that can't be linked because the copies are on different disks
+    if [[ ${#cross_disk_folders[@]} -gt 0 ]]; then
+        content+="<br>↔️ <b>Skipped, on different disks:</b> $(join_list "${cross_disk_folders[@]}")"
     fi
 
     echo "$content"
@@ -725,10 +762,12 @@ for group_name in "${!folders[@]}"; do
     log_msg INFO "  Creating hardlinks..."
 
     scan_group_report
+    report_cross_disk
 
     # Only create hardlinks if we found duplicates
     if [[ ${#linked_files[@]} -eq 0 ]]; then
-        clean_folders+=("$group_name")
+        # A folder whose only duplicates are on different disks is not "clean"
+        [[ ${#cross_disk_files[@]} -eq 0 ]] && clean_folders+=("$group_name")
         log_msg INFO "  Result: No valid duplicates found"
         log_msg INFO ""
         continue
@@ -833,25 +872,16 @@ log_msg INFO "========================================"
 log_msg INFO ""
 
 if [[ ${#clean_folders[@]} -gt 0 ]]; then
-    log_msg INFO "Clean folders: $(
-        IFS=', '
-        echo "${clean_folders[*]}"
-    )"
+    log_msg INFO "Clean folders: $(join_list "${clean_folders[@]}")"
 fi
 
 if [[ $total_files_linked -gt 0 ]]; then
     log_msg INFO "Total files linked: $total_files_linked"
-    log_msg INFO "Folders with hardlinks: $(
-        IFS=', '
-        echo "${folders_with_hardlinks[*]}"
-    )"
+    log_msg INFO "Folders with hardlinks: $(join_list "${folders_with_hardlinks[@]}")"
 fi
 
 if [[ ${#error_folders[@]} -gt 0 ]]; then
-    log_msg INFO "Error folders: $(
-        IFS=', '
-        echo "${error_folders[*]}"
-    )"
+    log_msg INFO "Error folders: $(join_list "${error_folders[@]}")"
 fi
 
 log_msg INFO "Total space saved: $(format_bytes $total_space_saved)"

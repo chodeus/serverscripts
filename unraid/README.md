@@ -35,5 +35,7 @@ Local changes:
 - `fclones.sh` keeps the fclones cache in `CACHE_PATH`.
 - `fclones.sh` shows space saved to two decimal places (1.05GB).
 - `fclones.sh` keeps report paths that contain fclones log words.
+- `fclones.sh` lists duplicate sets split across disks as skipped, not as errors.
+- `fclones.sh` separates folder names with a comma and a space.
 
 Version numbers left unchanged from upstream script at point in time.
