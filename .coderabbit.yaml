@@ -1,9 +1,11 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # Bespoke scripts that run as ROOT on live Proxmox and Unraid hosts: UPS
-# shutdown, host/flash backups, cache and qbit watchdogs, mover hooks.
+# shutdown, host/flash backups, nightly Ansible updates, power telemetry, cache
+# and qbit watchdogs, mover hooks.
 language: en-US
 reviews:
-  profile: chill
+  # assertive: these run as root on live hosts; the "**" rule keeps style nits out
+  profile: assertive
   request_changes_workflow: false
   high_level_summary: true
   poem: false
@@ -13,7 +15,7 @@ reviews:
     drafts: false
 
   path_instructions:
-    - path: "**/*.sh"
+    - path: "{**/*.sh,proxmox/power/pve-power-mqtt}"
       instructions: |-
         These run as root on live hosts. A bug here takes a machine down or destroys data — review accordingly.
         - BASH STRICT-MODE TRAPS under `set -euo pipefail`: a `cmd | grep -q x` in an `if` inverts what you think you are testing and a non-match aborts the script; `((count++))` returns exit status 1 when count is 0 and kills the run; `local x=$(cmd)` masks cmd's failure because `local` supplies the exit status. Command substitutions inside conditionals need explicit `|| true` where a non-zero result is expected.
@@ -35,6 +37,26 @@ reviews:
         - Mover tuning hooks are evaluated only when the scheduler runs them, so a condition added here does not take effect until the next scheduled window — a change that assumes immediate effect is wrong.
         - Array and cache paths differ between /mnt/user, /mnt/cache and /mnt/diskN; a script that mixes them can copy across the shfs layer or delete the wrong copy. Confirm which layer each path targets.
         - Respect the PUID/PGID/umask the rest of the stack uses; a root-created file the containers cannot read is a silent breakage.
+    - path: "proxmox/power/pve-power-mqtt"
+      instructions: |-
+        A bash service with no file extension, kept running by systemd, that publishes host power and temperature to MQTT:
+        - The broker password comes from /etc/pve-power-mqtt.env. Never echo it, and flag a change that puts it in a topic, a payload or a log line.
+        - A sensor that cannot be read must stay distinguishable from a reading (temperature uses -1): never publish 0 or a stale value for it. Counter wrap-around must stay handled.
+        - A broker outage must not end the service: a failed publish is dropped and the next interval tries again.
+    - path: "{proxmox/backup/cron.d/*,**/*.service,**/*.timer}"
+      instructions: |-
+        Schedules and units installed on the Proxmox host:
+        - Jobs depend on each other's windows: the PBS copy follows the 02:30 backup, the flash pull follows the weekly Appdata Backup, and the Ansible update stays clear of the 02:30-04:10 backup window. Flag a changed time that overlaps a job it must follow, and a comment or Description that no longer matches the schedule.
+        - cron.d lines name the user (root) and an absolute script path; a unit's ExecStart is absolute too.
+        - A oneshot that fails must show as failed: no `|| true` and no leading `-` on a command whose failure matters.
+    - path: "proxmox/ansible/**"
+      instructions: |-
+        Nightly unattended update of the PVE host and its LXC containers:
+        - Each play keeps any_errors_fatal: a failed host must stop the run before the report play, because the push-monitor ping at the end is the dead-man signal and is sent only when every host succeeded.
+        - The playbook never reboots. A pending reboot (the flag file, or a newer kernel than the running one on PVE) is reported, and the reboot monitor is held down until it clears.
+        - The Uptime Kuma app updates only within the same major version; a major jump is reported, not applied.
+        - Webhook and push URLs are secrets from group_vars/all.yml, which is not committed: never print one in a task name, a debug task or a log line.
+        - A failed Discord post must not fail the run or stop the dead-man ping.
     - path: "README.md"
       instructions: |-
         Table-only. Do not suggest adding rationale prose, "why" sections, background,
@@ -49,6 +71,14 @@ reviews:
           carry it.
         - The 1-2 line cap wins even inside an already heavily-commented file —
           matching local density is not licence to exceed it.
+        - A comment, help text, unit Description or log message that disagrees
+          with what the code does is a correctness finding, not a stale-comment
+          nit: report it and say which side is wrong.
+        - `.example` files hold placeholders only: a real token, password or
+          webhook URL in one is a finding.
+        - Do not flag stylistic preferences that are consistent across the file
+          (naming, quoting, formatting, line length). Report correctness,
+          security, data-loss and the classes named above.
 
   tools:
     gitleaks:
